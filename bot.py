@@ -1,14 +1,18 @@
+import os
 import datetime
 from telebot import TeleBot, types
 
-TOKEN = "YOUR_BOT_TOKEN"
-CHANNEL_USERNAME = "@ZenoX_Tools"  # قناة الاشتراك الإجباري
+# قراءة توكن البوت من متغيرات البيئة في ريندر (Environment Variables)
+TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_USERNAME = "@ZenoX_Tools"  # معرف قناتك الرسمية
+
+if not TOKEN:
+    raise ValueError("❌ خطأ: لم يتم العثور على متغير البيئة BOT_TOKEN في إعدادات ريندر!")
 
 bot = TeleBot(TOKEN, parse_mode="HTML")
 
-# قاعدة بيانات مؤقتة
 users_db = {}
-pending_referrals = {}  # حفظ الدعوات المعلقة حتى يختار المستخدم لغته
+pending_referrals = {}
 
 TRANSLATIONS = {
     "English": {
@@ -18,6 +22,10 @@ TRANSLATIONS = {
         "btn_buy": "Buy Credits ⭐",
         "btn_earn": "Earn Free Credits 🪄",
         "btn_lang": "Languages 🌐",
+        "sub_msg": "⚠️ <b>You must subscribe to our channel to use the bot!</b>\n\nSubscribe below then click Check 👇",
+        "btn_sub": "📢 Subscribe to Channel",
+        "btn_check_sub": "🔄 Check Subscription",
+        "sub_success": "✅ Subscription verified successfully!"
     },
     "العربية": {
         "welcome_back": "أهلاً بك مجدداً! 🌟\nأقوى منصة ذكاء اصطناعي لتوليد الفيديوهات وتبديل الوجوه بواقعية شديدة.",
@@ -26,42 +34,69 @@ TRANSLATIONS = {
         "btn_buy": "شراء رصيد ⭐",
         "btn_earn": "إربح رصيد مجاني 🪄",
         "btn_lang": "اللغات 🌐",
+        "sub_msg": "⚠️ <b>عذراً، يجب عليك الاشتراك في قناة البوت لتتمكن من استخدامه!</b>\n\nاشترك في القناة ثم اضغط على زر التحقق أدناه 👇",
+        "btn_sub": "📢 اشترك في القناة أولاً",
+        "btn_check_sub": "🔄 تحقق من الاشتراك",
+        "sub_success": "✅ تم التحقق من الاشتراك بنجاح!"
     },
     "Russian": {
-        "welcome_back": "С возвращением! 🌟\nСамая мощная платформа ИИ для создания видео и замены лиц.",
+        "welcome_back": "С возвращением! 🌟\nСамая мощная платформа ИИ.",
         "btn_start_app": "Начать бота 🤖",
         "btn_balance": "Баланс 📊",
         "btn_buy": "Купить кредиты ⭐",
         "btn_earn": "Бесплатные кредиты 🪄",
         "btn_lang": "Языки 🌐",
+        "sub_msg": "⚠️ <b>Подпишитесь на канал!</b>",
+        "btn_sub": "📢 Подписаться",
+        "btn_check_sub": "🔄 Проверить",
+        "sub_success": "✅ Успешно!"
     },
     "Spanish": {
-        "welcome_back": "¡Bienvenido de nuevo! 🌟\nLa plataforma de IA más potente.",
+        "welcome_back": "¡Bienvenido de nuevo! 🌟",
         "btn_start_app": "Iniciar Bot 🤖",
         "btn_balance": "Saldo 📊",
         "btn_buy": "Comprar Créditos ⭐",
         "btn_earn": "Obtener Gratis 🪄",
         "btn_lang": "Idiomas 🌐",
+        "sub_msg": "⚠️ <b>¡Suscríbete al canal!</b>",
+        "btn_sub": "📢 Suscribirse",
+        "btn_check_sub": "🔄 Verificar",
+        "sub_success": "✅ ¡Verificado!"
     },
     "Français": {
-        "welcome_back": "Bon retour! 🌟\nLa plateforme d'IA la plus puissante.",
+        "welcome_back": "Bon retour! 🌟",
         "btn_start_app": "Démarrer Bot 🤖",
         "btn_balance": "Solde 📊",
         "btn_buy": "Acheter Crédits ⭐",
         "btn_earn": "Gagner Gratuit 🪄",
         "btn_lang": "Langues 🌐",
+        "sub_msg": "⚠️ <b>Abonnez-vous au canal!</b>",
+        "btn_sub": "📢 S'abonner",
+        "btn_check_sub": "🔄 Vérifier",
+        "sub_success": "✅ Vérifié!"
     }
 }
 
 def get_user_lang(user_id):
     return users_db.get(str(user_id), {}).get("lang", "English")
 
+def check_subscription(user_id):
+    if not CHANNEL_USERNAME:
+        return True
+    try:
+        member = bot.get_chat_member(CHANNEL_USERNAME, int(user_id))
+        if member.status in ['member', 'creator', 'administrator']:
+            return True
+    except Exception as e:
+        print(f"Sub check error: {e}")
+    return False
+
 def get_main_chat_keyboard(lang="English"):
     t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     
     btn1 = types.KeyboardButton(t["btn_lang"])        # الزر 1
-    btn2 = types.KeyboardButton(t["btn_start_app"])   # الزر 2 (عريض بالقمة)
+    btn2 = types.KeyboardButton(t["btn_start_app"])   # الزر 2 (عريض في المقدمة)
     btn3 = types.KeyboardButton(t["btn_balance"])     # الزر 3
     btn4 = types.KeyboardButton(t["btn_buy"])         # الزر 4
     btn5 = types.KeyboardButton(t["btn_earn"])        # الزر 5
@@ -82,12 +117,48 @@ def send_language_selector(chat_id):
     )
     bot.send_message(chat_id, "Choose your language:👇🏻", reply_markup=markup)
 
+def send_subscription_request(chat_id, user_id):
+    lang = get_user_lang(user_id)
+    t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
+    
+    clean_channel = CHANNEL_USERNAME.replace("@", "")
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton(t["btn_sub"], url=f"https://t.me/{clean_channel}"),
+        types.InlineKeyboardButton(t["btn_check_sub"], callback_data="verify_subscription")
+    )
+    bot.send_message(chat_id, t["sub_msg"], reply_markup=markup)
+
+def finish_registration_and_welcome(chat_id, user_id, first_name):
+    lang = get_user_lang(user_id)
+    
+    # احتساب الإحالة بعد إتمام الاشتراك والتسجيل بنجاح
+    if user_id in pending_referrals:
+        referrer_id = pending_referrals[user_id]
+        if referrer_id in users_db:
+            users_db[referrer_id]["ref_balance"] += 10
+            users_db[referrer_id]["refs_count"] += 1
+            try:
+                bot.send_message(
+                    int(referrer_id),
+                    f"هنيأ لك قام <b>{first_name}</b> بالإنضمام عبر رابط الدعوة الخاص بك وقد حصلت على 10 رصيد 🎉"
+                )
+            except Exception:
+                pass
+        del pending_referrals[user_id]
+
+    kb = get_main_chat_keyboard(lang)
+    bot.send_message(chat_id, "إضغط على الزر أدناه لإستخدام البوت 👇🏻", reply_markup=kb)
+    
+    app_markup = types.InlineKeyboardMarkup()
+    app_markup.add(types.InlineKeyboardButton("إبدا إستخدام البوت 🤖", web_app=types.WebAppInfo(url="https://your-mini-app-url.com")))
+    bot.send_message(chat_id, "إضغط على الزر أدناه لإستخدام البوت 👇🏻", reply_markup=app_markup)
+
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     user_id = str(message.from_user.id)
     args = message.text.split()
     
-    # معالجة الرابط البرمجي الصحيح للإحالة
     if len(args) > 1 and args[1].startswith("ref_"):
         referrer_id = args[1].replace("ref_", "")
         if referrer_id != user_id and user_id not in users_db:
@@ -96,13 +167,16 @@ def handle_start(message):
     if user_id not in users_db:
         send_language_selector(message.chat.id)
     else:
-        lang = get_user_lang(user_id)
-        t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
-        bot.send_message(
-            message.chat.id,
-            t["welcome_back"],
-            reply_markup=get_main_chat_keyboard(lang)
-        )
+        if not check_subscription(user_id):
+            send_subscription_request(message.chat.id, user_id)
+        else:
+            lang = get_user_lang(user_id)
+            t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
+            bot.send_message(
+                message.chat.id,
+                t["welcome_back"],
+                reply_markup=get_main_chat_keyboard(lang)
+            )
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -118,22 +192,6 @@ def handle_callbacks(call):
                 "ref_balance": 0,
                 "refs_count": 0
             }
-            
-            # احتساب الإحالة وإرسال التهنئة فور إتمام اختيار اللغة
-            if user_id in pending_referrals:
-                referrer_id = pending_referrals[user_id]
-                if referrer_id in users_db:
-                    users_db[referrer_id]["ref_balance"] += 10
-                    users_db[referrer_id]["refs_count"] += 1
-                    try:
-                        name = call.from_user.first_name or "مستخدم جديد"
-                        bot.send_message(
-                            int(referrer_id),
-                            f"هنيأ لك قام <b>{name}</b> بالإنضمام عبر رابط الدعوة الخاص بك وقد حصلت على 10 رصيد 🎉"
-                        )
-                    except Exception:
-                        pass
-                del pending_referrals[user_id]
         else:
             users_db[user_id]["lang"] = selected_lang
 
@@ -142,12 +200,25 @@ def handle_callbacks(call):
         except Exception:
             pass
             
-        kb = get_main_chat_keyboard(selected_lang)
-        bot.send_message(call.message.chat.id, "إضغط على الزر أدناه لإستخدام البوت 👇🏻", reply_markup=kb)
+        # فور اختيار اللغة -> تظهر رسالة الاشتراك الإجباري تلقائياً
+        if not check_subscription(user_id):
+            send_subscription_request(call.message.chat.id, user_id)
+        else:
+            finish_registration_and_welcome(call.message.chat.id, user_id, call.from_user.first_name)
+
+    elif call.data == "verify_subscription":
+        lang = get_user_lang(user_id)
+        t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
         
-        app_markup = types.InlineKeyboardMarkup()
-        app_markup.add(types.InlineKeyboardButton("إبدا إستخدام البوت 🤖", web_app=types.WebAppInfo(url="https://your-mini-app-url.com")))
-        bot.send_message(call.message.chat.id, "إضغط على الزر أدناه لإستخدام البوت 👇🏻", reply_markup=app_markup)
+        if check_subscription(user_id):
+            bot.answer_callback_query(call.id, t["sub_success"])
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except Exception:
+                pass
+            finish_registration_and_welcome(call.message.chat.id, user_id, call.from_user.first_name)
+        else:
+            bot.answer_callback_query(call.id, "❌ لم تقم بالاشتراك في القناة بعد!", show_alert=True)
 
     elif call.data == "services_pricing":
         markup = types.InlineKeyboardMarkup()
@@ -264,6 +335,6 @@ def handle_chat_buttons(message):
         bot.send_message(message.chat.id, msg, reply_markup=markup)
 
 if __name__ == "__main__":
-    print("🤖 Bot is successfully running...")
+    print("🤖 Bot is running...")
     bot.infinity_polling()
 
