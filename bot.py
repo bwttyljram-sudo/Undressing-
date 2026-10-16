@@ -1,25 +1,25 @@
 import os
 import threading
 import datetime
-from flask import Flask
+from flask import Flask, render_template
 from telebot import TeleBot, types
 
-# تشغيل خادم ويب خفيف لإرضاء ريندر فقط وجعل النشر ينجح فوراً
+# خادم Web لفتح التطبيق المصغر
 app = Flask(__name__)
 
 @app.route('/')
-def home():
-    return "Bot is running successfully!"
+@app.route('/app')
+def mini_app():
+    return render_template('index.html')
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# جلب توكن البوت العادي من متغيرات البيئة في ريندر (التوكن القادم من BotFather)
 TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_USERNAME = "@ZenoX_Tools"  # معرف قناتك الرسمية للاشتراك الإجباري
+CHANNEL_USERNAME = "@ZenoX_Tools"
 
-bot = TeleBot(TOKEN, parse_mode="HTML")
+bot = TeleBot(TOKEN, parse_mode="HTML") if TOKEN else None
 
 users_db = {}
 pending_referrals = {}
@@ -91,7 +91,7 @@ def get_user_lang(user_id):
     return users_db.get(str(user_id), {}).get("lang", "English")
 
 def check_subscription(user_id):
-    if not CHANNEL_USERNAME:
+    if not CHANNEL_USERNAME or not bot:
         return True
     try:
         member = bot.get_chat_member(CHANNEL_USERNAME, int(user_id))
@@ -104,13 +104,11 @@ def check_subscription(user_id):
 def get_main_chat_keyboard(lang="English"):
     t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    
-    btn1 = types.KeyboardButton(t["btn_lang"])        # الزر 1
-    btn2 = types.KeyboardButton(t["btn_start_app"])   # الزر 2 (عريض في المقدمة)
-    btn3 = types.KeyboardButton(t["btn_balance"])     # الزر 3
-    btn4 = types.KeyboardButton(t["btn_buy"])         # الزر 4
-    btn5 = types.KeyboardButton(t["btn_earn"])        # الزر 5
-    
+    btn1 = types.KeyboardButton(t["btn_lang"])
+    btn2 = types.KeyboardButton(t["btn_start_app"])
+    btn3 = types.KeyboardButton(t["btn_balance"])
+    btn4 = types.KeyboardButton(t["btn_buy"])
+    btn5 = types.KeyboardButton(t["btn_earn"])
     kb.add(btn2)
     kb.add(btn4, btn3)
     kb.add(btn5, btn1)
@@ -157,186 +155,137 @@ def finish_registration_and_welcome(chat_id, user_id, first_name):
     kb = get_main_chat_keyboard(lang)
     bot.send_message(chat_id, "إضغط على الزر أدناه لإستخدام البوت 👇🏻", reply_markup=kb)
     
+    # رابط التطبيق المصغر الديناميكي على ريندر
+    app_url = os.getenv("RENDER_EXTERNAL_URL", "https://your-app.onrender.com") + "/app"
     app_markup = types.InlineKeyboardMarkup()
-    app_markup.add(types.InlineKeyboardButton("إبدا إستخدام البوت 🤖", web_app=types.WebAppInfo(url="https://your-mini-app-url.com")))
+    app_markup.add(types.InlineKeyboardButton("إبدا إستخدام البوت 🤖", web_app=types.WebAppInfo(url=app_url)))
     bot.send_message(chat_id, "إضغط على الزر أدناه لإستخدام البوت 👇🏻", reply_markup=app_markup)
 
-@bot.message_handler(commands=['start'])
-def handle_start(message):
-    user_id = str(message.from_user.id)
-    args = message.text.split()
-    
-    if len(args) > 1 and args[1].startswith("ref_"):
-        referrer_id = args[1].replace("ref_", "")
-        if referrer_id != user_id and user_id not in users_db:
-            pending_referrals[user_id] = referrer_id
+if bot:
+    @bot.message_handler(commands=['start'])
+    def handle_start(message):
+        user_id = str(message.from_user.id)
+        args = message.text.split()
+        if len(args) > 1 and args[1].startswith("ref_"):
+            referrer_id = args[1].replace("ref_", "")
+            if referrer_id != user_id and user_id not in users_db:
+                pending_referrals[user_id] = referrer_id
 
-    if user_id not in users_db:
-        send_language_selector(message.chat.id)
-    else:
-        if not check_subscription(user_id):
-            send_subscription_request(message.chat.id, user_id)
-        else:
-            lang = get_user_lang(user_id)
-            t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
-            bot.send_message(
-                message.chat.id,
-                t["welcome_back"],
-                reply_markup=get_main_chat_keyboard(lang)
-            )
-
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callbacks(call):
-    user_id = str(call.from_user.id)
-    
-    if call.data.startswith("set_lang_"):
-        selected_lang = call.data.replace("set_lang_", "")
         if user_id not in users_db:
-            users_db[user_id] = {"lang": selected_lang, "perm_balance": 20, "ref_balance": 0, "refs_count": 0}
+            send_language_selector(message.chat.id)
         else:
-            users_db[user_id]["lang"] = selected_lang
+            if not check_subscription(user_id):
+                send_subscription_request(message.chat.id, user_id)
+            else:
+                lang = get_user_lang(user_id)
+                t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
+                bot.send_message(message.chat.id, t["welcome_back"], reply_markup=get_main_chat_keyboard(lang))
 
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except Exception:
-            pass
-            
-        if not check_subscription(user_id):
-            send_subscription_request(call.message.chat.id, user_id)
-        else:
-            finish_registration_and_welcome(call.message.chat.id, user_id, call.from_user.first_name)
-
-    elif call.data == "verify_subscription":
-        lang = get_user_lang(user_id)
-        t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
-        
-        if check_subscription(user_id):
-            bot.answer_callback_query(call.id, t["sub_success"])
+    @bot.callback_query_handler(func=lambda call: True)
+    def handle_callbacks(call):
+        user_id = str(call.from_user.id)
+        if call.data.startswith("set_lang_"):
+            selected_lang = call.data.replace("set_lang_", "")
+            if user_id not in users_db:
+                users_db[user_id] = {"lang": selected_lang, "perm_balance": 20, "ref_balance": 0, "refs_count": 0}
+            else:
+                users_db[user_id]["lang"] = selected_lang
             try:
                 bot.delete_message(call.message.chat.id, call.message.message_id)
             except Exception:
                 pass
-            finish_registration_and_welcome(call.message.chat.id, user_id, call.from_user.first_name)
-        else:
-            bot.answer_callback_query(call.id, "❌ لم تقم بالاشتراك في القناة بعد!", show_alert=True)
+            if not check_subscription(user_id):
+                send_subscription_request(call.message.chat.id, user_id)
+            else:
+                finish_registration_and_welcome(call.message.chat.id, user_id, call.from_user.first_name)
 
-    elif call.data == "services_pricing":
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔙 العودة لقائمة الشراء", callback_data="show_buy_menu"))
-        text = (
-            "📋 جدول أسعار الخدمات بالنقاط (Credits):\n\n"
-            "🎬 توليد مقاطع الفيديو (صورة إلى فيديو):\n"
-            "• قاعدة الحساب: 1 ثانية = 1 رصيد\n"
-            "• فيديو 10 ثوانٍ = 10 نقاط\n"
-            "• فيديو 15 ثانية = 15 نقطة\n"
-            "• فيديو 30 ثانية = 30 نقطة (للمشتركين)\n\n"
-            "🎭 خدمات الوجوه والتعديل:\n"
-            "• تبديل الوجوه في الصور 🖼️: 2 رصيد\n"
-            "• تعديل/إزالة الملابس 👙✂️: 4 رصيد\n"
-            "• تبديل الوجوه في الفيديو 🎬: 10 رصيد"
-        )
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
+        elif call.data == "verify_subscription":
+            lang = get_user_lang(user_id)
+            t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
+            if check_subscription(user_id):
+                bot.answer_callback_query(call.id, t["sub_success"])
+                try:
+                    bot.delete_message(call.message.chat.id, call.message.message_id)
+                except Exception:
+                    pass
+                finish_registration_and_welcome(call.message.chat.id, user_id, call.from_user.first_name)
+            else:
+                bot.answer_callback_query(call.id, "❌ لم تقم بالاشتراك في القناة بعد!", show_alert=True)
 
-    elif call.data == "show_buy_menu":
-        show_buy_message(call.message.chat.id, call.message.message_id)
+        elif call.data == "services_pricing":
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔙 العودة لقائمة الشراء", callback_data="show_buy_menu"))
+            text = (
+                "📋 جدول أسعار الخدمات بالنقاط (Credits):\n\n"
+                "🎬 توليد مقاطع الفيديو (صورة إلى فيديو):\n"
+                "• قاعدة الحساب: 1 ثانية = 1 رصيد\n"
+                "• فيديو 10 ثوانٍ = 10 نقاط\n"
+                "• فيديو 15 ثانية = 15 نقطة\n"
+                "• فيديو 30 ثانية = 30 نقطة (ل للمشتركين)\n\n"
+                "🎭 خدمات الوجوه والتعديل:\n"
+                "• تبديل الوجوه في الصور 🖼️: 2 رصيد\n"
+                "• تعديل/إزالة الملابس 👙✂️: 4 رصيد\n"
+                "• تبديل الوجوه في الفيديو 🎬: 10 رصيد"
+            )
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    elif call.data == "main_menu_inline":
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except Exception:
-            pass
+        elif call.data == "show_buy_menu":
+            show_buy_message(call.message.chat.id, call.message.message_id)
 
-def show_buy_message(chat_id, message_id=None):
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        types.InlineKeyboardButton("📋 قائمة أسعار الخدمات بالكامل", callback_data="services_pricing"),
-        types.InlineKeyboardButton("شراء 150 نقطة: 200⭐ (≈ $2.6) 💳", callback_data="pay_150"),
-        types.InlineKeyboardButton("شراء 350 نقطة: 400⭐ (≈ $5.2) [وفر 20%] 💳", callback_data="pay_350"),
-        types.InlineKeyboardButton("شراء 650 نقطة: 650⭐ (≈ $8.4) [وفر 35%] 💳", callback_data="pay_650"),
-        types.InlineKeyboardButton("شراء 1000 نقطة: 950⭐ (≈ $950) [وفر 50%] 🔥", callback_data="pay_1000")
-    )
-    text = (
-        "اختر ما تريد شراءه 👇🏻\n"
-        "ستحصل على مزايا دائمة عند شراء أي باقة 🎉\n\n"
-        "• معالجة فيديو أسرع VIP 🚀\n"
-        "• إمكانية توليد مقاطع تصل إلى 30 ثانية ⏱️\n"
-        "• معزز جودة الوجه بدقة أعلى 4 مرات (4K) ✨"
-    )
-    if message_id:
-        bot.edit_message_text(text, chat_id, message_id, reply_markup=markup)
-    else:
-        bot.send_message(chat_id, text, reply_markup=markup)
-
-@bot.message_handler(func=lambda message: True)
-def handle_chat_buttons(message):
-    user_id = str(message.from_user.id)
-    text = message.text
-    lang = get_user_lang(user_id)
-    t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
-
-    if text in [t["btn_lang"], "اللغات 🌐", "الغات 🌐", "Languages 🌐"]:
-        send_language_selector(message.chat.id)
-
-    elif text in [t["btn_start_app"], "بدء إستخدام البوت 🤖"]:
-        app_markup = types.InlineKeyboardMarkup()
-        app_markup.add(types.InlineKeyboardButton("إبدا إستخدام البوت 🤖", web_app=types.WebAppInfo(url="https://your-mini-app-url.com")))
-        bot.send_message(message.chat.id, "إضغط على الزر أدناه لإستخدام البوت 👇🏻", reply_markup=app_markup)
-
-    elif text in [t["btn_balance"], "رصيد الحساب 📊"]:
-        u = users_db.get(user_id, {"perm_balance": 20, "ref_balance": 0})
-        perm = u.get("perm_balance", 20)
-        ref = u.get("ref_balance", 0)
-        total = perm + ref
-        
-        now_str = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S GMT")
-        msg = (
-            f"{now_str}\n\n"
-            f"رصيدك الدائم {perm} نقطة 📊\n"
-            f"رصيد الدعوات {ref} نقطة 🔗\n\n"
-            f"إجمالي الرصيد القابل للإستخدام {total} نقطة 🟢\n\n"
-            f"الـ ID الخاص بحسابك {user_id}\n\n\n"
-            f"‼️ ملاحضة أقدم رصيد للدعوات تنتهي صلاحيتة\n"
-            f"بعد 14 يوم إذا لم يتم إستخدامة... الرصيد الدائم\n"
-            f"صالح مدى الحياة 💥"
-        )
-        bot.send_message(message.chat.id, msg)
-
-    elif text in [t["btn_buy"], "شراء رصيد ⭐"]:
-        show_buy_message(message.chat.id)
-
-    elif text in [t["btn_earn"], "إربح رصيد مجاني 🪄"]:
-        u = users_db.get(user_id, {"ref_balance": 0, "refs_count": 0})
-        bot_info = bot.get_me()
-        bot_username = bot_info.username if bot_info else "YourBotName"
-        ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
-        
-        msg = (
-            "🪄 اكسب رصيداً مجانياً ودائماً!\n\n"
-            "شارك رابطك الخاص مع أصدقائك، واحصل على:\n"
-            "🎁 10 نقاط مجانية لكل صديق ينضم عبر رابطك\n\n\n"
-            "🔗 رابط الدعوة الخاص بك (انسخه أو شاركه مباشرة):\n"
-            f"{ref_link}\n\n\n"
-            "📊 إحصائياتك:\n"
-            f"• عدد الدعوات الناجحة: {u.get('refs_count', 0)} أصدقاء 👥\n"
-            f"• إجمالي الرصيد المكتسب: {u.get('ref_balance', 0)} نقطة 🟢\n\n\n"
-            "‼️ ملاحظة: يتم احتساب الرصيد تلقائياً فور انضمام\n"
-            "صديقك للبوت، وستصلك رسالة تهنئة فورية.\n"
-            "رصيد الدعوات صالح لمدة 30 يوماً."
-        )
-        
-        promo_text = "🔥 بوت خلع الملابس بالذكاء الاصطناعي مجاناً! واقعي جداً"
-        share_url = f"https://t.me/share/url?url={ref_link}&text={promo_text}"
-        
+    def show_buy_message(chat_id, message_id=None):
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("📤 مشاركة الرابط مع الأصدقاء", url=share_url),
-            types.InlineKeyboardButton("🔙 العودة للقائمة الرئيسية", callback_data="main_menu_inline")
+            types.InlineKeyboardButton("📋 قائمة أسعار الخدمات بالكامل", callback_data="services_pricing"),
+            types.InlineKeyboardButton("شراء 150 نقطة: 200⭐ (≈ $2.6) 💳", callback_data="pay_150"),
+            types.InlineKeyboardButton("شراء 350 نقطة: 400⭐ (≈ $5.2) [وفر 20%] 💳", callback_data="pay_350"),
+            types.InlineKeyboardButton("شراء 650 نقطة: 650⭐ (≈ $8.4) [وفر 35%] 💳", callback_data="pay_650"),
+            types.InlineKeyboardButton("شراء 1000 نقطة: 950⭐ (≈ $950) [وفر 50%] 🔥", callback_data="pay_1000")
         )
-        bot.send_message(message.chat.id, msg, reply_markup=markup)
+        text = "اختر ما تريد شراءه 👇🏻\nستحصل على مزايا دائمة عند شراء أي باقة 🎉\n\n• معالجة فيديو أسرع VIP 🚀\n• إمكانية توليد مقاطع تصل إلى 30 ثانية ⏱️\n• معزز جودة الوجه بدقة أعلى 4 مرات (4K) ✨"
+        if message_id:
+            bot.edit_message_text(text, chat_id, message_id, reply_markup=markup)
+        else:
+            bot.send_message(chat_id, text, reply_markup=markup)
+
+    @bot.message_handler(func=lambda message: True)
+    def handle_chat_buttons(message):
+        user_id = str(message.from_user.id)
+        text = message.text
+        lang = get_user_lang(user_id)
+        t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
+
+        if text in [t["btn_lang"], "اللغات 🌐", "الغات 🌐", "Languages 🌐"]:
+            send_language_selector(message.chat.id)
+        elif text in [t["btn_start_app"], "بدء إستخدام البوت 🤖"]:
+            app_url = os.getenv("RENDER_EXTERNAL_URL", "https://your-app.onrender.com") + "/app"
+            app_markup = types.InlineKeyboardMarkup()
+            app_markup.add(types.InlineKeyboardButton("إبدا إستخدام البوت 🤖", web_app=types.WebAppInfo(url=app_url)))
+            bot.send_message(message.chat.id, "إضغط على الزر أدناه لإستخدام البوت 👇🏻", reply_markup=app_markup)
+        elif text in [t["btn_balance"], "رصيد الحساب 📊"]:
+            u = users_db.get(user_id, {"perm_balance": 20, "ref_balance": 0})
+            perm = u.get("perm_balance", 20)
+            ref = u.get("ref_balance", 0)
+            total = perm + ref
+            now_str = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S GMT")
+            msg = f"{now_str}\n\nرصيدك الدائم {perm} نقطة 📊\nرصيد الدعوات {ref} نقطة 🔗\n\nإجمالي الرصيد القابل للإستخدام {total} نقطة 🟢\n\nالـ ID الخاص بحسابك {user_id}\n\n\n‼️ ملاحضة أقدم رصيد للدعوات تنتهي صلاحيتة\nبعد 14 يوم إذا لم يتم إستخدامة... الرصيد الدائم\nصالح مدى الحياة 💥"
+            bot.send_message(message.chat.id, msg)
+        elif text in [t["btn_buy"], "شراء رصيد ⭐"]:
+            show_buy_message(message.chat.id)
+        elif text in [t["btn_earn"], "إربح رصيد مجاني 🪄"]:
+            u = users_db.get(user_id, {"ref_balance": 0, "refs_count": 0})
+            bot_info = bot.get_me()
+            bot_username = bot_info.username if bot_info else "YourBotName"
+            ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+            msg = f"🪄 اكسب رصيداً مجانياً ودائماً!\n\nشارك رابطك الخاص مع أصدقائك، واحصل على:\n🎁 10 نقاط مجانية لكل صديق ينضم عبر رابطك\n\n\n🔗 رابط الدعوة الخاص بك (انسخه أو شاركه مباشرة):\n{ref_link}\n\n\n📊 إحصائياتك:\n• عدد الدعوات الناجحة: {u.get('refs_count', 0)} أصدقاء 👥\n• إجمالي الرصيد المكتسب: {u.get('ref_balance', 0)} نقطة 🟢\n\n\n‼️ ملاحظة: يتم احتساب الرصيد تلقائياً فور انضمام\nصديقك للبوت، وستصلك رسالة تهنئة فورية.\nرصيد الدعوات صالح لمدة 30 يوماً."
+            promo_text = "🔥 بوت خلع الملابس بالذكاء الاصطناعي مجاناً! واقعي جداً"
+            share_url = f"https://t.me/share/url?url={ref_link}&text={promo_text}"
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(types.InlineKeyboardButton("📤 مشاركة الرابط مع الأصدقاء", url=share_url))
+            bot.send_message(message.chat.id, msg, reply_markup=markup)
 
 if __name__ == "__main__":
-    # تشغيل سرفر Flask في الخلفية لإرضاء ريندر وبقاء البوت شغالاً بالتوكن
     threading.Thread(target=run_flask, daemon=True).start()
-    print("🤖 Bot and Flask server are running...")
-    bot.infinity_polling()
+    if bot:
+        print("🤖 Bot is running...")
+        bot.infinity_polling()
 
