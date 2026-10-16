@@ -1,13 +1,23 @@
 import os
+import threading
 import datetime
+from flask import Flask
 from telebot import TeleBot, types
 
-# قراءة توكن البوت من متغيرات البيئة في ريندر (Environment Variables)
-TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_USERNAME = "@ZenoX_Tools"  # معرف قناتك الرسمية
+# تشغيل خادم ويب خفيف لإرضاء ريندر فقط وجعل النشر ينجح فوراً
+app = Flask(__name__)
 
-if not TOKEN:
-    raise ValueError("❌ خطأ: لم يتم العثور على متغير البيئة BOT_TOKEN في إعدادات ريندر!")
+@app.route('/')
+def home():
+    return "Bot is running successfully!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# جلب توكن البوت العادي من متغيرات البيئة في ريندر (التوكن القادم من BotFather)
+TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_USERNAME = "@ZenoX_Tools"  # معرف قناتك الرسمية للاشتراك الإجباري
 
 bot = TeleBot(TOKEN, parse_mode="HTML")
 
@@ -40,7 +50,7 @@ TRANSLATIONS = {
         "sub_success": "✅ تم التحقق من الاشتراك بنجاح!"
     },
     "Russian": {
-        "welcome_back": "С возвращением! 🌟\nСамая мощная платформа ИИ.",
+        "welcome_back": "С возвращением! 🌟",
         "btn_start_app": "Начать бота 🤖",
         "btn_balance": "Баланс 📊",
         "btn_buy": "Купить кредиты ⭐",
@@ -120,7 +130,6 @@ def send_language_selector(chat_id):
 def send_subscription_request(chat_id, user_id):
     lang = get_user_lang(user_id)
     t = TRANSLATIONS.get(lang, TRANSLATIONS["English"])
-    
     clean_channel = CHANNEL_USERNAME.replace("@", "")
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -131,8 +140,6 @@ def send_subscription_request(chat_id, user_id):
 
 def finish_registration_and_welcome(chat_id, user_id, first_name):
     lang = get_user_lang(user_id)
-    
-    # احتساب الإحالة بعد إتمام الاشتراك والتسجيل بنجاح
     if user_id in pending_referrals:
         referrer_id = pending_referrals[user_id]
         if referrer_id in users_db:
@@ -184,14 +191,8 @@ def handle_callbacks(call):
     
     if call.data.startswith("set_lang_"):
         selected_lang = call.data.replace("set_lang_", "")
-        
         if user_id not in users_db:
-            users_db[user_id] = {
-                "lang": selected_lang,
-                "perm_balance": 20,
-                "ref_balance": 0,
-                "refs_count": 0
-            }
+            users_db[user_id] = {"lang": selected_lang, "perm_balance": 20, "ref_balance": 0, "refs_count": 0}
         else:
             users_db[user_id]["lang"] = selected_lang
 
@@ -200,7 +201,6 @@ def handle_callbacks(call):
         except Exception:
             pass
             
-        # فور اختيار اللغة -> تظهر رسالة الاشتراك الإجباري تلقائياً
         if not check_subscription(user_id):
             send_subscription_request(call.message.chat.id, user_id)
         else:
@@ -335,6 +335,8 @@ def handle_chat_buttons(message):
         bot.send_message(message.chat.id, msg, reply_markup=markup)
 
 if __name__ == "__main__":
-    print("🤖 Bot is running...")
+    # تشغيل سرفر Flask في الخلفية لإرضاء ريندر وبقاء البوت شغالاً بالتوكن
+    threading.Thread(target=run_flask, daemon=True).start()
+    print("🤖 Bot and Flask server are running...")
     bot.infinity_polling()
 
